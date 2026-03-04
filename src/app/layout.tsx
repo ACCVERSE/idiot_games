@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toaster";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,25 +13,22 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Accverse - Le Réseau Social de Vos Animaux",
-  description: "Le premier réseau social dédié à vos animaux de compagnie. Créez des profils, partagez leurs moments, connectez-vous avec d'autres passionnés à travers le monde.",
-  keywords: ["Accverse", "pets", "social network", "animaux", "chiens", "chats", "réseau social animalier", "pet community"],
-  authors: [{ name: "Accverse Team" }],
+  title: "Idiot Games - The Dumbest Games on Earth",
+  description: "Simple, addictive, viral mini-games. Vote for your team, send a ball to the moon, find the hidden meme. The stupidest games you'll ever love.",
+  keywords: ["idiot games", "mini games", "viral games", "fun games", "team vote", "casual games"],
+  authors: [{ name: "Idiot Games" }],
   icons: {
     icon: "/favicon.png",
-    apple: "/accverse-logo.png",
   },
   openGraph: {
-    title: "Accverse - Le Réseau Social de Vos Animaux",
-    description: "Le premier réseau social dédié à vos animaux. Partagez, connectez-vous, célébrez la vie de vos compagnons.",
+    title: "Idiot Games - The Dumbest Games on Earth",
+    description: "Simple, addictive, viral mini-games. The stupidest games you'll ever love.",
     type: "website",
-    images: ["/accverse-logo.png"],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Accverse - Le Réseau Social de Vos Animaux",
-    description: "Le premier réseau social dédié à vos animaux.",
-    images: ["/accverse-logo.png"],
+    title: "Idiot Games - The Dumbest Games on Earth",
+    description: "Simple, addictive, viral mini-games.",
   },
 };
 
@@ -42,12 +38,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="fr" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white text-foreground min-h-screen`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground min-h-screen`}
       >
         {children}
-        <Toaster />
       </body>
     </html>
   );
