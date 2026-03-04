@@ -3,782 +3,454 @@
 import { useState, useEffect, useCallback } from 'react';
 
 // ============ TYPES ============
-interface Battle {
-  id: string;
-  left: { name: string; emoji: string; votes: number };
-  right: { name: string; emoji: string; votes: number };
+interface User {
+  name: string;
+  energy: number;
+  votedBattles: string[];
+  createdAt: Date;
 }
 
 interface Winner {
   id: number;
   name: string;
-  game: string;
+  type: 'moon' | 'earth' | 'meme';
+  attempts?: number;
   timestamp: Date;
 }
 
 interface GameState {
-  ballPosition: number; // 0-100
+  ballPosition: number;
   memeFound: boolean;
   memePosition: number;
   revealedCells: boolean[];
-  currentBattle: Battle;
-  winners: Winner[];
+  currentBattleId: string;
   nextReset: Date;
+  moonWinners: Winner[];
+  earthWinners: Winner[];
+  memeWinners: Winner[];
   totalVotes: { left: number; right: number };
 }
 
-// ============ INITIAL DATA ============
-const BATTLES: Battle[] = [
-  { id: '1', left: { name: 'iOS', emoji: '🍎', votes: 0 }, right: { name: 'Android', emoji: '🤖', votes: 0 } },
-  { id: '2', left: { name: 'McDonalds', emoji: '🍔', votes: 0 }, right: { name: 'Burger King', emoji: '👑', votes: 0 } },
-  { id: '3', left: { name: 'Cats', emoji: '🐱', votes: 0 }, right: { name: 'Dogs', emoji: '🐕', votes: 0 } },
-  { id: '4', left: { name: 'Coffee', emoji: '☕', votes: 0 }, right: { name: 'Tea', emoji: '🍵', votes: 0 } },
-  { id: '5', left: { name: 'PlayStation', emoji: '🎮', votes: 0 }, right: { name: 'Xbox', emoji: '🕹️', votes: 0 } },
-  { id: '6', left: { name: 'Pineapple on Pizza', emoji: '🍍', votes: 0 }, right: { name: 'No Pineapple', emoji: '🍕', votes: 0 } },
-  { id: '7', left: { name: 'Summer', emoji: '☀️', votes: 0 }, right: { name: 'Winter', emoji: '❄️', votes: 0 } },
-  { id: '8', left: { name: 'Twitter', emoji: '🐦', votes: 0 }, right: { name: 'Threads', emoji: '🧵', votes: 0 } },
+// ============ CONSTANTS ============
+const BATTLES = [
+  { id: '1', left: { name: 'iOS', emoji: '🍎' }, right: { name: 'Android', emoji: '🤖' } },
+  { id: '2', left: { name: 'McDonalds', emoji: '🍔' }, right: { name: 'Burger King', emoji: '👑' } },
+  { id: '3', left: { name: 'Cats', emoji: '🐱' }, right: { name: 'Dogs', emoji: '🐕' } },
+  { id: '4', left: { name: 'Coffee', emoji: '☕' }, right: { name: 'Tea', emoji: '🍵' } },
+  { id: '5', left: { name: 'PlayStation', emoji: '🎮' }, right: { name: 'Xbox', emoji: '🕹️' } },
+  { id: '6', left: { name: 'Pineapple on Pizza', emoji: '🍍' }, right: { name: 'No Pineapple', emoji: '🍕' } },
+  { id: '7', left: { name: 'Summer', emoji: '☀️' }, right: { name: 'Winter', emoji: '❄️' } },
+  { id: '8', left: { name: 'Twitter', emoji: '🐦' }, right: { name: 'Threads', emoji: '🧵' } },
 ];
 
-const MEMES = ['🤡', '👽', '🦄', '🐸', '🤖', '👹', '🤠', '😈'];
-
-const GRID_SIZE = 64; // 8x8 grid
-
-// ============ LOCAL STORAGE HELPERS ============
+const MEMES = ['🤡', '👽', '🦄', '🐸', '🤖', '👹', '🤠', '😈', '👺', '🧙'];
+const GRID_SIZE = 100;
+const USER_KEY = 'idiot-games-user';
+const STATE_KEY = 'idiot-games-state';
 const HOURS_48 = 48 * 60 * 60 * 1000;
 
+// ============ STORAGE FUNCTIONS ============
 function getInitialState(): GameState {
   const now = new Date();
-  const nextReset = new Date(now.getTime() + HOURS_48);
-  const randomBattle = BATTLES[Math.floor(Math.random() * BATTLES.length)];
-  
   return {
-    ballPosition: 0,
+    ballPosition: 50,
     memeFound: false,
     memePosition: Math.floor(Math.random() * GRID_SIZE),
     revealedCells: Array(GRID_SIZE).fill(false),
-    currentBattle: { 
-      ...randomBattle, 
-      left: { ...randomBattle.left, votes: Math.floor(Math.random() * 100) }, 
-      right: { ...randomBattle.right, votes: Math.floor(Math.random() * 100) } 
-    },
-    winners: [],
-    nextReset,
-    totalVotes: { left: 0, right: 0 },
+    currentBattleId: BATTLES[Math.floor(Math.random() * BATTLES.length)].id,
+    nextReset: new Date(now.getTime() + HOURS_48),
+    moonWinners: [],
+    earthWinners: [],
+    memeWinners: [],
+    totalVotes: { left: Math.floor(Math.random() * 100) + 50, right: Math.floor(Math.random() * 100) + 50 },
   };
 }
 
-function loadState(): GameState {
-  if (typeof window === 'undefined') {
-    return getInitialState();
-  }
-  
-  const saved = localStorage.getItem('idiot-games-state');
-  if (saved) {
-    try {
-      const parsed = JSON.parse(saved);
-      // Check if reset is needed
-      if (new Date(parsed.nextReset) < new Date()) {
-        return getInitialState();
-      }
-      return {
-        ...parsed,
-        nextReset: new Date(parsed.nextReset),
-        winners: parsed.winners.map((w: Winner) => ({ ...w, timestamp: new Date(w.timestamp) })),
-      };
-    } catch {
-      return getInitialState();
-    }
-  }
-  return getInitialState();
+function loadFromStorage<T>(key: string, defaultValue: T): T {
+  if (typeof window === 'undefined') return defaultValue;
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  return defaultValue;
 }
 
-function saveState(state: GameState) {
+function saveToStorage<T>(key: string, value: T) {
   if (typeof window !== 'undefined') {
-    localStorage.setItem('idiot-games-state', JSON.stringify(state));
+    localStorage.setItem(key, JSON.stringify(value));
   }
 }
 
-// ============ AD MODAL COMPONENT ============
+// ============ LOGIN MODAL ============
+function LoginModal({ onLogin }: { onLogin: (name: string) => void }) {
+  const [name, setName] = useState('');
+  return (
+    <div className="fixed inset-0 bg-gradient-to-br from-purple-600 to-pink-500 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl text-center">
+        <div className="text-6xl mb-4">🎮</div>
+        <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-pink-500 to-purple-500 bg-clip-text text-transparent">Idiot Games</h1>
+        <p className="text-gray-500 mb-6">Enter your name to play!</p>
+        <input
+          type="text" value={name} onChange={(e) => setName(e.target.value)}
+          placeholder="Your name..."
+          className="w-full px-4 py-3 rounded-xl border-2 border-gray-200 text-center text-lg font-medium focus:outline-none focus:border-pink-500 mb-4"
+          maxLength={15} autoFocus
+        />
+        <button
+          onClick={() => name.trim() && onLogin(name.trim())}
+          className={`w-full py-3 rounded-full font-bold text-lg transition-all ${
+            name.trim() ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white hover:shadow-lg' : 'bg-gray-200 text-gray-400'
+          }`}
+        >
+          Play Now! 🚀
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============ AD MODAL ============
 function AdModal({ onComplete, action }: { onComplete: () => void; action: string }) {
   const [progress, setProgress] = useState(0);
-  const [canClose, setCanClose] = useState(false);
-
   useEffect(() => {
-    const interval = setInterval(() => {
-      setProgress(p => {
-        if (p >= 100) {
-          setCanClose(true);
-          return 100;
-        }
-        return p + 2;
-      });
-    }, 100);
+    const interval = setInterval(() => setProgress(p => Math.min(100, p + 2)), 100);
     return () => clearInterval(interval);
   }, []);
-
+  const canClose = progress >= 100;
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-card rounded-3xl p-8 max-w-md w-full shadow-2xl text-center">
-        <div className="text-4xl mb-4">📺</div>
-        <h3 className="text-xl font-bold mb-2">Ad Break!</h3>
-        <p className="text-muted-foreground mb-4">
-          Watch this ad to {action}
-        </p>
-        
-        {/* Fake ad content */}
-        <div className="bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl p-6 mb-4 text-white">
-          <div className="text-2xl mb-2">🎮</div>
-          <div className="font-bold">Want to remove ads?</div>
-          <div className="text-sm opacity-80">Get Premium for $2.99/mo</div>
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl text-center">
+        <div className="text-4xl mb-3">📺</div>
+        <h3 className="text-lg font-bold mb-1">Ad Break!</h3>
+        <p className="text-gray-500 text-sm mb-4">Watch to {action}</p>
+        <div className="bg-gradient-to-br from-purple-100 to-pink-100 rounded-2xl p-4 mb-4">
+          <div className="text-2xl">⚡</div>
+          <div className="font-bold text-sm">Win games = +5 Energy!</div>
         </div>
-        
-        {/* Progress bar */}
-        <div className="bg-secondary rounded-full h-3 overflow-hidden mb-4">
-          <div 
-            className="bg-gradient-to-r from-pink-500 to-purple-500 h-full transition-all duration-100"
-            style={{ width: `${progress}%` }}
-          />
+        <div className="bg-gray-200 rounded-full h-2 overflow-hidden mb-3">
+          <div className="bg-gradient-to-r from-pink-500 to-purple-500 h-full transition-all" style={{ width: `${progress}%` }} />
         </div>
-        
-        <button
-          onClick={onComplete}
-          disabled={!canClose}
-          className={`w-full py-3 rounded-full font-bold transition-all ${
-            canClose 
-              ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white hover:shadow-lg' 
-              : 'bg-muted text-muted-foreground cursor-not-allowed'
-          }`}
-        >
-          {canClose ? '✓ Continue' : `Wait ${Math.ceil((100 - progress) / 2)}s`}
+        <button onClick={onComplete} disabled={!canClose}
+          className={`w-full py-2.5 rounded-full font-bold transition-all ${canClose ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white' : 'bg-gray-200 text-gray-400'}`}>
+          {canClose ? '✓ Continue' : `${Math.ceil((100 - progress) / 2)}s`}
         </button>
       </div>
     </div>
   );
 }
 
-// ============ TEAM VOTE COMPONENT ============
-function TeamVote({ 
-  battle, 
-  totalVotes,
-  onVote 
-}: { 
-  battle: Battle; 
-  totalVotes: { left: number; right: number };
-  onVote: (side: 'left' | 'right') => void;
-}) {
-  const leftPercent = totalVotes.left + totalVotes.right > 0 
-    ? Math.round((totalVotes.left / (totalVotes.left + totalVotes.right)) * 100) 
-    : 50;
-  const rightPercent = 100 - leftPercent;
-
+// ============ WINNER MODAL ============
+function WinnerModal({ type, attempts, onClose }: { type: 'moon' | 'earth' | 'meme'; attempts?: number; onClose: () => void }) {
+  const info = { moon: { emoji: '🌙', title: 'Moon Reached!', desc: 'You sent the ball to the moon!' }, earth: { emoji: '🌍', title: 'Earth Reached!', desc: 'You brought the ball back!' }, meme: { emoji: '🔍', title: 'Meme Found!', desc: `Found in ${attempts} attempts!` } };
   return (
-    <div className="bg-card rounded-3xl p-6 shadow-lg">
-      <div className="text-center mb-6">
-        <h2 className="text-2xl font-bold mb-1">🗳️ Team Vote</h2>
-        <p className="text-muted-foreground text-sm">Pick your side!</p>
-      </div>
-
-      {/* Vote bars */}
-      <div className="flex items-center gap-4 mb-6">
-        {/* Left team */}
-        <button
-          onClick={() => onVote('left')}
-          className="flex-1 bg-gradient-to-br from-blue-500 to-purple-500 text-white rounded-2xl p-4 hover:scale-105 transition-transform"
-        >
-          <div className="text-4xl mb-2">{battle.left.emoji}</div>
-          <div className="font-bold">{battle.left.name}</div>
-          <div className="text-2xl font-bold mt-1">{leftPercent}%</div>
-        </button>
-
-        <div className="text-2xl font-bold text-muted-foreground">VS</div>
-
-        {/* Right team */}
-        <button
-          onClick={() => onVote('right')}
-          className="flex-1 bg-gradient-to-br from-pink-500 to-orange-500 text-white rounded-2xl p-4 hover:scale-105 transition-transform"
-        >
-          <div className="text-4xl mb-2">{battle.right.emoji}</div>
-          <div className="font-bold">{battle.right.name}</div>
-          <div className="text-2xl font-bold mt-1">{rightPercent}%</div>
-        </button>
-      </div>
-
-      {/* Progress bar */}
-      <div className="bg-secondary rounded-full h-4 overflow-hidden">
-        <div className="flex h-full">
-          <div 
-            className="bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-500"
-            style={{ width: `${leftPercent}%` }}
-          />
-          <div 
-            className="bg-gradient-to-r from-pink-500 to-orange-500 transition-all duration-500"
-            style={{ width: `${rightPercent}%` }}
-          />
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl text-center">
+        <div className="text-7xl mb-4">{info[type].emoji}</div>
+        <h2 className="text-2xl font-bold mb-2">{info[type].title}</h2>
+        <p className="text-gray-500 mb-4">{info[type].desc}</p>
+        <div className="bg-gradient-to-r from-yellow-100 to-orange-100 rounded-2xl p-4 mb-4">
+          <div className="text-2xl font-bold text-orange-500">+5 ⚡ Energy</div>
         </div>
+        <button onClick={onClose} className="w-full py-3 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-full font-bold hover:scale-105 transition-all">Continue! 🎮</button>
       </div>
-
-      <p className="text-center text-xs text-muted-foreground mt-4">
-        {totalVotes.left + totalVotes.right} total votes
-      </p>
     </div>
   );
 }
 
-// ============ MOON BALL COMPONENT ============
-function MoonBall({ 
-  position, 
-  onMove,
-  onReset 
-}: { 
-  position: number; 
-  onMove: (direction: 'up' | 'down') => void;
-  onReset: () => void;
-}) {
-  const moonReached = position >= 100;
-
+// ============ TEAM VOTE ============
+function TeamVote({ battleId, totalVotes, hasVoted, onVote }: { battleId: string; totalVotes: { left: number; right: number }; hasVoted: boolean; onVote: (side: 'left' | 'right') => void }) {
+  const battle = BATTLES.find(b => b.id === battleId) || BATTLES[0];
+  const total = totalVotes.left + totalVotes.right;
+  const leftPercent = total > 0 ? Math.round((totalVotes.left / total) * 100) : 50;
   return (
-    <div className="bg-card rounded-3xl p-6 shadow-lg">
+    <div className="bg-white rounded-3xl p-6 shadow-lg">
       <div className="text-center mb-4">
-        <h2 className="text-2xl font-bold mb-1">🌙 Moon Ball</h2>
-        <p className="text-muted-foreground text-sm">Send the ball to the moon!</p>
+        <h2 className="text-xl font-bold mb-1">🗳️ Team Vote</h2>
+        <p className="text-gray-500 text-sm">{hasVoted ? "Thanks for voting!" : "Pick your side! (1 vote per battle)"}</p>
       </div>
-
-      {/* Game area */}
-      <div className="relative h-80 bg-gradient-to-b from-purple-200 via-blue-100 to-green-200 rounded-2xl overflow-hidden mb-4">
-        {/* Moon */}
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 text-6xl">
-          🌕
-        </div>
-        
-        {/* Ball */}
-        <div 
-          className="absolute left-1/2 text-5xl transition-all duration-500 ease-out"
-          style={{ 
-            top: moonReached ? '60px' : `${80 - (position * 0.7)}%`,
-            transform: `translateX(-50%) ${moonReached ? 'scale(1.2)' : ''}`
-          }}
-        >
-          {moonReached ? '🎉' : '🏀'}
-        </div>
-
-        {/* Earth */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-5xl">
-          🌍
-        </div>
-
-        {/* Progress indicator */}
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/30 rounded-full px-2 py-1 text-white text-sm font-bold">
-          {position}%
+      <div className="flex items-center gap-3 mb-4">
+        <button onClick={() => !hasVoted && onVote('left')} disabled={hasVoted}
+          className={`flex-1 rounded-2xl p-4 transition-all ${hasVoted ? 'opacity-70' : 'hover:scale-105'} bg-gradient-to-br from-blue-400 to-purple-500 text-white`}>
+          <div className="text-3xl mb-1">{battle.left.emoji}</div>
+          <div className="font-bold">{battle.left.name}</div>
+          <div className="text-xl font-bold mt-1">{leftPercent}%</div>
+        </button>
+        <div className="text-xl font-bold text-gray-300">VS</div>
+        <button onClick={() => !hasVoted && onVote('right')} disabled={hasVoted}
+          className={`flex-1 rounded-2xl p-4 transition-all ${hasVoted ? 'opacity-70' : 'hover:scale-105'} bg-gradient-to-br from-pink-400 to-orange-500 text-white`}>
+          <div className="text-3xl mb-1">{battle.right.emoji}</div>
+          <div className="font-bold">{battle.right.name}</div>
+          <div className="text-xl font-bold mt-1">{100 - leftPercent}%</div>
+        </button>
+      </div>
+      <div className="bg-gray-100 rounded-full h-3 overflow-hidden">
+        <div className="flex h-full">
+          <div className="bg-gradient-to-r from-blue-400 to-purple-500" style={{ width: `${leftPercent}%` }} />
+          <div className="bg-gradient-to-r from-pink-400 to-orange-500" style={{ width: `${100 - leftPercent}%` }} />
         </div>
       </div>
+      <p className="text-center text-xs text-gray-400 mt-3">{total} total votes</p>
+    </div>
+  );
+}
 
-      {/* Controls */}
-      {moonReached ? (
+// ============ MOON BALL ============
+function MoonBall({ position, onMove, disabled }: { position: number; onMove: (d: 'up' | 'down') => void; disabled: boolean }) {
+  const atMoon = position >= 100;
+  const atEarth = position <= 0;
+  return (
+    <div className="bg-white rounded-3xl p-5 shadow-lg">
+      <div className="text-center mb-3">
+        <h2 className="text-xl font-bold mb-1">🌙 Moon Ball</h2>
+        <p className="text-gray-500 text-sm">Send the ball to the moon or back to Earth!</p>
+      </div>
+      <div className="relative h-56 bg-gradient-to-b from-indigo-900 via-blue-800 to-green-700 rounded-2xl overflow-hidden mb-3">
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 text-4xl">🌕</div>
+        <div className="absolute top-4 left-8 text-xs text-white/40">✨</div>
+        <div className="absolute top-10 right-6 text-xs text-white/40">⭐</div>
+        <div className={`absolute left-1/2 text-xl transition-all duration-500 ease-out ${atMoon || atEarth ? 'animate-bounce' : ''}`}
+          style={{ top: atMoon ? '24px' : atEarth ? '85%' : `${85 - position * 0.6}%`, transform: 'translateX(-50%)' }}>
+          {atMoon ? '🎉' : atEarth ? '🏠' : '🏀'}
+        </div>
+        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-3xl">🌍</div>
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/30 rounded px-2 py-1 text-white text-xs font-bold">{position}%</div>
+      </div>
+      {atMoon || atEarth ? (
         <div className="text-center">
-          <p className="text-xl font-bold text-green-500 mb-4 animate-bounce">🎉 Moon Reached! 🎉</p>
-          <button
-            onClick={onReset}
-            className="px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-full font-bold hover:shadow-lg transition-all"
-          >
-            🔄 Reset Game
-          </button>
+          <p className="text-lg font-bold text-green-500 mb-2">{atMoon ? '🌙 Moon Reached!' : '🌍 Earth Reached!'}</p>
+          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-gray-100 text-gray-600 rounded-full font-medium">Reset</button>
         </div>
       ) : (
-        <div className="flex gap-4">
-          <button
-            onClick={() => onMove('up')}
-            className="flex-1 py-4 bg-gradient-to-r from-green-500 to-blue-500 text-white rounded-2xl font-bold text-lg hover:shadow-lg hover:scale-105 transition-all"
-          >
-            🚀 Up!
-          </button>
-          <button
-            onClick={() => onMove('down')}
-            className="flex-1 py-4 bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-2xl font-bold text-lg hover:shadow-lg hover:scale-105 transition-all"
-          >
-            🪂 Down!
-          </button>
+        <div className="flex gap-3">
+          <button onClick={() => onMove('up')} disabled={disabled}
+            className={`flex-1 py-3 rounded-xl font-bold ${disabled ? 'bg-gray-200 text-gray-400' : 'bg-gradient-to-r from-green-400 to-blue-500 text-white hover:scale-105'}`}>🚀 Moon</button>
+          <button onClick={() => onMove('down')} disabled={disabled}
+            className={`flex-1 py-3 rounded-xl font-bold ${disabled ? 'bg-gray-200 text-gray-400' : 'bg-gradient-to-r from-orange-400 to-red-500 text-white hover:scale-105'}`}>🪂 Earth</button>
         </div>
       )}
     </div>
   );
 }
 
-// ============ FIND MEME COMPONENT ============
-function FindMeme({ 
-  memePosition,
-  revealedCells,
-  memeFound,
-  onReveal,
-  onReset,
-}: { 
-  memePosition: number;
-  revealedCells: boolean[];
-  memeFound: boolean;
-  onReveal: (index: number) => void;
-  onReset: () => void;
-}) {
+// ============ FIND MEME ============
+function FindMeme({ memePosition, revealedCells, memeFound, onReveal, disabled }: { memePosition: number; revealedCells: boolean[]; memeFound: boolean; onReveal: (i: number) => void; disabled: boolean }) {
   const meme = MEMES[memePosition % MEMES.length];
-  const revealedCount = revealedCells.filter(Boolean).length;
-
+  const count = revealedCells.filter(Boolean).length;
   if (memeFound) {
     return (
-      <div className="bg-card rounded-3xl p-6 shadow-lg text-center">
-        <div className="text-6xl mb-4">🎉</div>
-        <h2 className="text-2xl font-bold mb-2">Found the Meme!</h2>
-        <p className="text-muted-foreground mb-4">
-          The meme was: <span className="text-4xl">{meme}</span>
-        </p>
-        <p className="text-sm text-muted-foreground mb-4">
-          Found in {revealedCount} attempts!
-        </p>
-        <button
-          onClick={onReset}
-          className="px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-full font-bold hover:shadow-lg transition-all"
-        >
-          🔄 New Game
-        </button>
+      <div className="bg-white rounded-3xl p-6 shadow-lg text-center">
+        <div className="text-5xl mb-3">🎉</div>
+        <h2 className="text-xl font-bold mb-2">Meme Found!</h2>
+        <p className="text-gray-500 mb-2">The meme was: <span className="text-3xl">{meme}</span></p>
+        <p className="text-sm text-gray-400">Found in {count} attempts!</p>
       </div>
     );
   }
-
   return (
-    <div className="bg-card rounded-3xl p-6 shadow-lg">
-      <div className="text-center mb-4">
-        <h2 className="text-2xl font-bold mb-1">🔍 Find the Meme</h2>
-        <p className="text-muted-foreground text-sm">
-          One cell hides a secret meme. Find it to win!
-        </p>
-        <p className="text-xs text-muted-foreground mt-1">
-          {revealedCount} / {GRID_SIZE} cells revealed
-        </p>
+    <div className="bg-white rounded-3xl p-4 shadow-lg">
+      <div className="text-center mb-2">
+        <h2 className="text-lg font-bold mb-1">🔍 Find the Meme</h2>
+        <p className="text-gray-500 text-xs">Find the hidden meme! {count}/{GRID_SIZE} revealed</p>
       </div>
-
-      {/* Grid */}
-      <div className="grid grid-cols-8 gap-1 mb-4">
-        {Array(GRID_SIZE).fill(null).map((_, index) => (
-          <button
-            key={index}
-            onClick={() => !revealedCells[index] && onReveal(index)}
-            disabled={revealedCells[index]}
-            className={`aspect-square rounded-lg text-lg sm:text-xl transition-all ${
-              revealedCells[index]
-                ? index === memePosition
-                  ? 'bg-gradient-to-br from-yellow-400 to-orange-500'
-                  : 'bg-secondary'
-                : 'bg-gradient-to-br from-purple-100 to-pink-100 hover:from-purple-200 hover:to-pink-200 hover:scale-105 cursor-pointer'
-            }`}
-          >
-            {revealedCells[index] ? (
-              index === memePosition ? meme : '❌'
-            ) : '?'}
+      <div className="grid grid-cols-10 gap-0.5">
+        {Array(GRID_SIZE).fill(null).map((_, i) => (
+          <button key={i} onClick={() => !revealedCells[i] && !disabled && onReveal(i)} disabled={revealedCells[i] || disabled}
+            className={`aspect-square rounded text-xs transition-all ${
+              revealedCells[i] ? (i === memePosition ? 'bg-gradient-to-br from-yellow-300 to-orange-400' : 'bg-gray-100')
+                : disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-gradient-to-br from-purple-50 to-pink-50 hover:from-purple-100 hover:to-pink-100 hover:scale-105 cursor-pointer'
+            }`}>
+            {revealedCells[i] ? (i === memePosition ? meme : '·') : '?'}
           </button>
         ))}
       </div>
-
-      <p className="text-center text-xs text-muted-foreground">
-        Click a cell to reveal • Watch a short ad to continue
-      </p>
     </div>
   );
 }
 
-// ============ HALL OF FAME COMPONENT ============
-function HallOfFame({ winners }: { winners: Winner[] }) {
-  if (winners.length === 0) {
-    return (
-      <div className="bg-card rounded-3xl p-6 shadow-lg text-center">
-        <div className="text-4xl mb-2">🏆</div>
-        <h3 className="text-lg font-bold mb-1">Hall of Fame</h3>
-        <p className="text-muted-foreground text-sm">No winners yet. Be the first!</p>
-      </div>
-    );
-  }
-
+// ============ LEADERBOARD ============
+function Leaderboard({ moon, earth, meme }: { moon: Winner[]; earth: Winner[]; meme: Winner[] }) {
+  const [tab, setTab] = useState<'moon' | 'earth' | 'meme'>('moon');
+  const winners = tab === 'moon' ? moon : tab === 'earth' ? earth : meme;
   return (
-    <div className="bg-card rounded-3xl p-6 shadow-lg">
-      <div className="text-center mb-4">
-        <div className="text-4xl mb-2">🏆</div>
-        <h3 className="text-lg font-bold">Hall of Fame</h3>
-      </div>
-      
-      <div className="space-y-2 max-h-48 overflow-y-auto">
-        {winners.slice(-10).reverse().map((winner, index) => (
-          <div 
-            key={winner.id}
-            className={`flex items-center gap-3 p-2 rounded-xl ${
-              index === 0 ? 'bg-gradient-to-r from-yellow-100 to-orange-100' : 'bg-secondary'
-            }`}
-          >
-            <span className="text-xl">
-              {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '🏅'}
-            </span>
-            <span className="font-medium flex-1">{winner.name}</span>
-            <span className="text-xs text-muted-foreground">{winner.game}</span>
-          </div>
+    <div className="bg-white rounded-2xl p-4 shadow">
+      <h3 className="font-bold text-center mb-2">🏆 Leaderboards</h3>
+      <div className="flex gap-1 mb-2">
+        {(['moon', 'earth', 'meme'] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`flex-1 py-1.5 rounded-lg text-xs font-medium ${tab === t ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white' : 'bg-gray-100 text-gray-500'}`}>
+            {t === 'moon' ? '🌙' : t === 'earth' ? '🌍' : '🔍'}
+          </button>
         ))}
       </div>
+      {winners.length === 0 ? <p className="text-center text-gray-400 text-xs py-3">No winners yet!</p> : (
+        <div className="space-y-1 max-h-28 overflow-y-auto">
+          {winners.slice(-5).reverse().map((w, i) => (
+            <div key={w.id} className={`flex items-center gap-2 p-1.5 rounded-lg ${i === 0 ? 'bg-yellow-50' : 'bg-gray-50'}`}>
+              <span className="text-sm">{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '🏅'}</span>
+              <span className="font-medium text-sm flex-1">{w.name}</span>
+              {w.attempts && <span className="text-xs text-gray-400">{w.attempts} tries</span>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-// ============ TIMER COMPONENT ============
+// ============ TIMER ============
 function ResetTimer({ nextReset }: { nextReset: Date }) {
-  const [timeLeft, setTimeLeft] = useState('');
-
+  const [time, setTime] = useState('');
   useEffect(() => {
-    const updateTimer = () => {
-      const now = new Date();
-      const diff = nextReset.getTime() - now.getTime();
-      
-      if (diff <= 0) {
-        setTimeLeft('Resetting...');
-        return;
-      }
-      
-      const hours = Math.floor(diff / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-      
-      setTimeLeft(`${hours}h ${minutes}m ${seconds}s`);
+    const update = () => {
+      const diff = nextReset.getTime() - Date.now();
+      if (diff <= 0) return setTime('Reset!');
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setTime(`${h}h ${m}m ${s}s`);
     };
-
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
+    update();
+    const i = setInterval(update, 1000);
+    return () => clearInterval(i);
   }, [nextReset]);
-
-  return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="text-muted-foreground">Next reset:</span>
-      <span className="font-mono font-bold text-pink-500">{timeLeft}</span>
-    </div>
-  );
+  return <span className="font-mono text-xs text-pink-500">{time}</span>;
 }
 
-// ============ NAME INPUT MODAL ============
-function NameInputModal({ onSubmit }: { onSubmit: (name: string) => void }) {
-  const [name, setName] = useState('');
-
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-card rounded-3xl p-8 max-w-md w-full shadow-2xl text-center">
-        <div className="text-5xl mb-4">🏆</div>
-        <h3 className="text-2xl font-bold mb-2">You Won!</h3>
-        <p className="text-muted-foreground mb-6">Enter your name for the Hall of Fame</p>
-        
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Your name..."
-          className="w-full px-4 py-3 rounded-xl border border-border bg-background text-center text-lg font-medium focus:outline-none focus:ring-2 focus:ring-pink-500 mb-4"
-          maxLength={20}
-          autoFocus
-        />
-        
-        <button
-          onClick={() => onSubmit(name || 'Anonymous')}
-          disabled={!name.trim()}
-          className={`w-full py-3 rounded-full font-bold transition-all ${
-            name.trim()
-              ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white hover:shadow-lg'
-              : 'bg-muted text-muted-foreground cursor-not-allowed'
-          }`}
-        >
-          Submit
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ============ MAIN PAGE ============
+// ============ MAIN ============
 export default function IdiotGames() {
-  const [activeGame, setActiveGame] = useState<'vote' | 'moon' | 'meme'>('vote');
+  const [user, setUser] = useState<User | null>(() => loadFromStorage(USER_KEY, null as User | null));
   const [state, setState] = useState<GameState>(() => {
-    // Use lazy initialization to load from localStorage
-    if (typeof window !== 'undefined') {
-      return loadState();
-    }
+    const saved = loadFromStorage(STATE_KEY, null as GameState | null);
+    if (saved && new Date(saved.nextReset) > new Date()) return saved;
     return getInitialState();
   });
-  const [showAd, setShowAd] = useState<{ action: string; callback: () => void } | null>(null);
-  const [showNameInput, setShowNameInput] = useState(false);
-  const [adWatched, setAdWatched] = useState(false);
+  const [game, setGame] = useState<'vote' | 'moon' | 'meme'>('vote');
+  const [ad, setAd] = useState<{ action: string; cb: () => void } | null>(null);
+  const [win, setWin] = useState<{ type: 'moon' | 'earth' | 'meme'; attempts?: number } | null>(null);
 
-  // Save state on change (debounced)
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      saveState(state);
-    }, 100);
-    return () => clearTimeout(timeoutId);
+    const t = setTimeout(() => saveToStorage(STATE_KEY, state), 100);
+    return () => clearTimeout(t);
   }, [state]);
 
-  // Handle voting
-  const handleVote = useCallback((side: 'left' | 'right') => {
-    if (adWatched) {
-      setState(prev => ({
-        ...prev,
-        totalVotes: {
-          ...prev.totalVotes,
-          [side]: prev.totalVotes[side] + 1
-        }
-      }));
-      setAdWatched(false);
-    } else {
-      setShowAd({
-        action: `vote for Team ${side === 'left' ? state.currentBattle.left.name : state.currentBattle.right.name}`,
-        callback: () => {
-          setAdWatched(true);
-          setTimeout(() => {
-            setState(prev => ({
-              ...prev,
-              totalVotes: {
-                ...prev.totalVotes,
-                [side]: prev.totalVotes[side] + 1
-              }
-            }));
-            setAdWatched(false);
-          }, 100);
-        }
-      });
-    }
-  }, [adWatched, state.currentBattle]);
+  useEffect(() => {
+    if (user) saveToStorage(USER_KEY, user);
+  }, [user]);
 
-  // Handle ball movement
-  const handleMove = useCallback((direction: 'up' | 'down') => {
-    if (adWatched) {
-      setState(prev => {
-        const newPos = direction === 'up' 
-          ? Math.min(100, prev.ballPosition + Math.floor(Math.random() * 10) + 5)
-          : Math.max(0, prev.ballPosition - Math.floor(Math.random() * 10) - 5);
-        
-        return { ...prev, ballPosition: newPos };
-      });
-      setAdWatched(false);
-    } else {
-      setShowAd({
-        action: `move the ball ${direction}`,
-        callback: () => {
-          setAdWatched(true);
-          setTimeout(() => {
-            setState(prev => {
-              const newPos = direction === 'up' 
-                ? Math.min(100, prev.ballPosition + Math.floor(Math.random() * 10) + 5)
-                : Math.max(0, prev.ballPosition - Math.floor(Math.random() * 10) - 5);
-              
-              return { ...prev, ballPosition: newPos };
-            });
-            setAdWatched(false);
-          }, 100);
-        }
-      });
-    }
-  }, [adWatched]);
-
-  // Handle cell reveal
-  const handleReveal = useCallback((index: number) => {
-    if (adWatched) {
-      setState(prev => {
-        const newRevealed = [...prev.revealedCells];
-        newRevealed[index] = true;
-        
-        const found = index === prev.memePosition;
-        
-        if (found) {
-          setShowNameInput(true);
-          return { ...prev, revealedCells: newRevealed, memeFound: true };
-        }
-        
-        return { ...prev, revealedCells: newRevealed };
-      });
-      setAdWatched(false);
-    } else {
-      setShowAd({
-        action: 'reveal this cell',
-        callback: () => {
-          setAdWatched(true);
-          setTimeout(() => {
-            setState(prev => {
-              const newRevealed = [...prev.revealedCells];
-              newRevealed[index] = true;
-              
-              const found = index === prev.memePosition;
-              
-              if (found) {
-                setShowNameInput(true);
-                return { ...prev, revealedCells: newRevealed, memeFound: true };
-              }
-              
-              return { ...prev, revealedCells: newRevealed };
-            });
-            setAdWatched(false);
-          }, 100);
-        }
-      });
-    }
-  }, [adWatched]);
-
-  // Handle winner name submission
-  const handleWinnerSubmit = useCallback((name: string) => {
-    setState(prev => ({
-      ...prev,
-      winners: [...prev.winners, {
-        id: Date.now(),
-        name,
-        game: 'Find the Meme',
-        timestamp: new Date()
-      }]
-    }));
-    setShowNameInput(false);
+  const login = useCallback((name: string) => {
+    const u: User = { name, energy: 5, votedBattles: [], createdAt: new Date() };
+    setUser(u);
   }, []);
 
-  // Handle game reset
-  const handleResetMeme = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      memeFound: false,
-      memePosition: Math.floor(Math.random() * GRID_SIZE),
-      revealedCells: Array(GRID_SIZE).fill(false),
-    }));
-  }, []);
+  const spendEnergy = useCallback((action: string, cb: () => void) => {
+    if (user && user.energy > 0) {
+      setUser(u => u ? { ...u, energy: u.energy - 1 } : null);
+      cb();
+    } else {
+      setAd({ action, cb });
+    }
+  }, [user]);
 
-  const handleResetMoon = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      ballPosition: 0,
-    }));
-  }, []);
+  const vote = useCallback((side: 'left' | 'right') => {
+    if (!user || user.votedBattles.includes(state.currentBattleId)) return;
+    spendEnergy(`vote Team ${side}`, () => {
+      setState(s => ({ ...s, totalVotes: { ...s.totalVotes, [side]: s.totalVotes[side] + 1 } }));
+      setUser(u => u ? { ...u, votedBattles: [...u.votedBattles, state.currentBattleId] } : null);
+    });
+  }, [user, state.currentBattleId, spendEnergy]);
+
+  const move = useCallback((dir: 'up' | 'down') => {
+    spendEnergy(`move ${dir}`, () => {
+      setState(s => {
+        const change = Math.floor(Math.random() * 10) + 5;
+        const pos = dir === 'up' ? Math.min(100, s.ballPosition + change) : Math.max(0, s.ballPosition - change);
+        if (pos >= 100) {
+          const w: Winner = { id: Date.now(), name: user?.name || 'Anonymous', type: 'moon', timestamp: new Date() };
+          setUser(u => u ? { ...u, energy: u.energy + 5 } : null);
+          setTimeout(() => setWin({ type: 'moon' }), 500);
+          return { ...s, ballPosition: pos, moonWinners: [...s.moonWinners, w] };
+        }
+        if (pos <= 0) {
+          const w: Winner = { id: Date.now(), name: user?.name || 'Anonymous', type: 'earth', timestamp: new Date() };
+          setUser(u => u ? { ...u, energy: u.energy + 5 } : null);
+          setTimeout(() => setWin({ type: 'earth' }), 500);
+          return { ...s, ballPosition: pos, earthWinners: [...s.earthWinners, w] };
+        }
+        return { ...s, ballPosition: pos };
+      });
+    });
+  }, [spendEnergy, user]);
+
+  const reveal = useCallback((i: number) => {
+    spendEnergy('reveal cell', () => {
+      setState(s => {
+        const cells = [...s.revealedCells];
+        cells[i] = true;
+        if (i === s.memePosition) {
+          const attempts = cells.filter(Boolean).length;
+          const w: Winner = { id: Date.now(), name: user?.name || 'Anonymous', type: 'meme', attempts, timestamp: new Date() };
+          setUser(u => u ? { ...u, energy: u.energy + 5 } : null);
+          setTimeout(() => setWin({ type: 'meme', attempts }), 500);
+          return { ...s, revealedCells: cells, memeFound: true, memeWinners: [...s.memeWinners, w] };
+        }
+        return { ...s, revealedCells: cells };
+      });
+    });
+  }, [spendEnergy, user]);
+
+  if (!user) return <LoginModal onLogin={login} />;
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Ad Modal */}
-      {showAd && (
-        <AdModal 
-          onComplete={() => {
-            showAd.callback();
-            setShowAd(null);
-          }}
-          action={showAd.action}
-        />
-      )}
-
-      {/* Name Input Modal */}
-      {showNameInput && (
-        <NameInputModal onSubmit={handleWinnerSubmit} />
-      )}
-
-      {/* Header */}
-      <header className="sticky top-0 bg-background/80 backdrop-blur-lg border-b border-border z-40">
-        <div className="max-w-4xl mx-auto px-4 py-4">
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-orange-50">
+      {ad && <AdModal onComplete={() => { ad.cb(); setAd(null); }} action={ad.action} />}
+      {win && <WinnerModal type={win.type} attempts={win.attempts} onClose={() => setWin(null)} />}
+      <header className="sticky top-0 bg-white/80 backdrop-blur-lg border-b border-gray-100 z-40">
+        <div className="max-w-4xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">🎮</span>
-              <div>
-                <h1 className="text-xl font-bold bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 bg-clip-text text-transparent">Idiot Games</h1>
-                <p className="text-xs text-muted-foreground hidden sm:block">The dumbest games on Earth</p>
-              </div>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">🎮</span>
+              <h1 className="text-lg font-bold bg-gradient-to-r from-pink-500 to-purple-500 bg-clip-text text-transparent">Idiot Games</h1>
             </div>
-            <ResetTimer nextReset={state.nextReset} />
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 bg-gradient-to-r from-yellow-100 to-orange-100 px-3 py-1 rounded-full">
+                <span className="text-sm">⚡</span>
+                <span className="font-bold text-orange-500">{user.energy}</span>
+              </div>
+              <ResetTimer nextReset={state.nextReset} />
+            </div>
           </div>
-
-          {/* Game Tabs */}
-          <div className="flex gap-2 mt-4 overflow-x-auto pb-2">
-            <button
-              onClick={() => setActiveGame('vote')}
-              className={`px-4 py-2 rounded-full font-medium whitespace-nowrap transition-all ${
-                activeGame === 'vote'
-                  ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white shadow-lg'
-                  : 'bg-secondary hover:bg-secondary/80'
-              }`}
-            >
-              🗳️ Team Vote
-            </button>
-            <button
-              onClick={() => setActiveGame('moon')}
-              className={`px-4 py-2 rounded-full font-medium whitespace-nowrap transition-all ${
-                activeGame === 'moon'
-                  ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white shadow-lg'
-                  : 'bg-secondary hover:bg-secondary/80'
-              }`}
-            >
-              🌙 Moon Ball
-            </button>
-            <button
-              onClick={() => setActiveGame('meme')}
-              className={`px-4 py-2 rounded-full font-medium whitespace-nowrap transition-all ${
-                activeGame === 'meme'
-                  ? 'bg-gradient-to-r from-green-500 to-yellow-500 text-white shadow-lg'
-                  : 'bg-secondary hover:bg-secondary/80'
-              }`}
-            >
-              🔍 Find Meme
-            </button>
+          <div className="flex items-center justify-between mt-2">
+            <span className="text-sm text-gray-500">👤 {user.name}</span>
+            <div className="flex gap-1">
+              {(['vote', 'moon', 'meme'] as const).map(g => (
+                <button key={g} onClick={() => setGame(g)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium ${game === g ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                  {g === 'vote' ? '🗳️' : g === 'moon' ? '🌙' : '🔍'}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </header>
-
-      {/* Main Content */}
-      <main className="max-w-4xl mx-auto px-4 py-6">
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Game Area */}
-          <div className="lg:col-span-2">
-            {activeGame === 'vote' && (
-              <TeamVote 
-                battle={state.currentBattle}
-                totalVotes={state.totalVotes}
-                onVote={handleVote}
-              />
-            )}
-            {activeGame === 'moon' && (
-              <MoonBall 
-                position={state.ballPosition}
-                onMove={handleMove}
-                onReset={handleResetMoon}
-              />
-            )}
-            {activeGame === 'meme' && (
-              <FindMeme 
-                memePosition={state.memePosition}
-                revealedCells={state.revealedCells}
-                memeFound={state.memeFound}
-                onReveal={handleReveal}
-                onReset={handleResetMeme}
-              />
-            )}
+      <main className="max-w-4xl mx-auto px-4 py-4">
+        <div className="grid md:grid-cols-3 gap-4">
+          <div className="md:col-span-2">
+            {game === 'vote' && <TeamVote battleId={state.currentBattleId} totalVotes={state.totalVotes} hasVoted={user.votedBattles.includes(state.currentBattleId)} onVote={vote} />}
+            {game === 'moon' && <MoonBall position={state.ballPosition} onMove={move} disabled={user.energy === 0} />}
+            {game === 'meme' && <FindMeme memePosition={state.memePosition} revealedCells={state.revealedCells} memeFound={state.memeFound} onReveal={reveal} disabled={user.energy === 0} />}
           </div>
-
-          {/* Sidebar */}
-          <div className="space-y-6">
-            <HallOfFame winners={state.winners} />
-            
-            {/* Premium Promo */}
-            <div className="bg-gradient-to-br from-purple-100 to-pink-100 rounded-3xl p-6 text-center">
-              <div className="text-3xl mb-2">✨</div>
-              <h3 className="font-bold mb-1">Remove Ads</h3>
-              <p className="text-sm text-muted-foreground mb-3">
-                Get Premium for unlimited ad-free gameplay
-              </p>
-              <div className="text-2xl font-bold text-pink-500 mb-3">$2.99/mo</div>
-              <button className="w-full py-2 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-full font-medium hover:shadow-lg transition-all">
-                Upgrade
-              </button>
+          <div className="space-y-4">
+            <Leaderboard moon={state.moonWinners} earth={state.earthWinners} meme={state.memeWinners} />
+            <div className="bg-gradient-to-br from-purple-100 to-pink-100 rounded-2xl p-4 text-center">
+              <div className="text-xl mb-1">⚡</div>
+              <div className="font-bold text-sm">Energy System</div>
+              <p className="text-xs text-gray-500 mt-1">Win = +5 energy!</p>
+              <p className="text-xs text-gray-400 mt-2">{user.energy} free plays left</p>
             </div>
           </div>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="border-t border-border mt-12">
-        <div className="max-w-4xl mx-auto px-4 py-6 text-center">
-          <p className="text-sm text-muted-foreground">
-            🎮 Idiot Games © 2025 • The dumbest games on Earth
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            Simple. Addictive. Viral.
-          </p>
-        </div>
-      </footer>
+      <footer className="text-center py-4 text-xs text-gray-400">🎮 Idiot Games © 2025</footer>
     </div>
   );
 }
