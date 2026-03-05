@@ -485,6 +485,7 @@ export default function IdiotGames() {
   );
   const [loading, setLoading] = useState(!player);
   const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -514,9 +515,32 @@ export default function IdiotGames() {
   useEffect(() => {
     if (player) {
       fetch('/api/game/state')
-        .then((res) => res.json())
-        .then((data) => setGameState(data))
-        .catch(console.error)
+        .then((res) => {
+          if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+          }
+          return res.json();
+        })
+        .then(async (data) => {
+          console.log('Game state loaded:', data);
+          // If no active round, initialize one
+          if (!data.activeRound) {
+            console.log('No active round, initializing...');
+            const resetRes = await fetch('/api/game/reset', { method: 'POST' });
+            const resetData = await resetRes.json();
+            console.log('Reset result:', resetData);
+            // Fetch state again after reset
+            const stateRes = await fetch('/api/game/state');
+            const stateData = await stateRes.json();
+            setGameState(stateData);
+          } else {
+            setGameState(data);
+          }
+        })
+        .catch((err) => {
+          console.error('Error fetching game state:', err);
+          setError('Failed to load game. Please check your connection and try again.');
+        })
         .finally(() => setLoading(false));
     }
   }, [player]);
@@ -665,7 +689,32 @@ export default function IdiotGames() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-orange-50 flex items-center justify-center">
-        <div className="text-4xl animate-bounce">🎮</div>
+        <div className="text-center">
+          <div className="text-4xl animate-bounce mb-4">🎮</div>
+          <p className="text-gray-500">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-orange-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl text-center">
+          <div className="text-6xl mb-4">😕</div>
+          <h2 className="text-xl font-bold mb-2">Oops!</h2>
+          <p className="text-gray-500 mb-4">{error}</p>
+          <button
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              window.location.reload();
+            }}
+            className="px-6 py-2 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-full font-bold"
+          >
+            Try Again
+          </button>
+        </div>
       </div>
     );
   }
